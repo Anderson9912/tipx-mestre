@@ -1,5 +1,5 @@
 <?php
-// mestre_sintetico.php - Versão com headers de navegador completo
+// mestre_sintetico.php - Versão final com tratamento de redirecionamento
 // Mestre artificial para rodar 24/7 no Koyeb
 
 header('Content-Type: text/plain');
@@ -133,31 +133,80 @@ function tentarSerMestre($deviceId) {
     curl_setopt($ch, CURLOPT_TIMEOUT, 15);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_COOKIEFILE, '/tmp/cookies.txt'); // Armazena cookies
-    curl_setopt($ch, CURLOPT_COOKIEJAR, '/tmp/cookies.txt');  // como um navegador
+    curl_setopt($ch, CURLOPT_MAXREDIRS, 3);
+    curl_setopt($ch, CURLOPT_COOKIEFILE, '/tmp/cookies.txt');
+    curl_setopt($ch, CURLOPT_COOKIEJAR, '/tmp/cookies.txt');
     
     $resposta = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $effectiveUrl = curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
     $erro = curl_error($ch);
     curl_close($ch);
     
     echo "[LOCK] Código HTTP: $httpCode\n";
+    echo "[LOCK] URL final: $effectiveUrl\n";
+    
     if ($erro) {
         echo "[LOCK] Erro cURL: $erro\n";
     }
     
-    // Tenta extrair JSON mesmo que venha dentro do HTML
+    // Método 1: Tentar extrair JSON do HTML com regex mais abrangente
     if ($resposta) {
-        // Procura por um padrão JSON simples no meio do HTML
-        preg_match('/\{.*"status".*\}/', $resposta, $matches);
+        // Procura por qualquer objeto JSON na resposta
+        preg_match('/\{[^\{\}]*"status"[^\{\}]*\}/', $resposta, $matches);
+        
+        if (empty($matches)) {
+            // Tenta um padrão mais abrangente
+            preg_match('/\{.*"status".*\}/s', $resposta, $matches);
+        }
+        
         if (!empty($matches[0])) {
             $jsonEncontrado = $matches[0];
-            echo "[LOCK] JSON extraído do HTML: $jsonEncontrado\n";
-            return json_decode($jsonEncontrado, true);
-        } else {
-            // Se não encontrar JSON, mostra os primeiros 200 caracteres da resposta
-            echo "[LOCK] Resposta (início): " . substr($resposta, 0, 200) . "\n";
+            echo "[LOCK] JSON extraído: $jsonEncontrado\n";
+            
+            $dados = json_decode($jsonEncontrado, true);
+            if ($dados && isset($dados['status'])) {
+                return $dados;
+            }
         }
+        
+        // Método 2: Se não encontrou JSON, tenta fazer uma segunda requisição para a URL final
+        if ($effectiveUrl != $url) {
+            echo "[LOCK] Seguindo redirecionamento para: $effectiveUrl\n";
+            
+            $ch2 = curl_init();
+            curl_setopt($ch2, CURLOPT_URL, $effectiveUrl);
+            curl_setopt($ch2, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch2, CURLOPT_TIMEOUT, 10);
+            curl_setopt($ch2, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch2, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch2, CURLOPT_HTTPHEADER, $headers);
+            curl_setopt($ch2, CURLOPT_COOKIEFILE, '/tmp/cookies.txt');
+            curl_setopt($ch2, CURLOPT_COOKIEJAR, '/tmp/cookies.txt');
+            
+            $segundaResposta = curl_exec($ch2);
+            $segundoHttpCode = curl_getinfo($ch2, CURLINFO_HTTP_CODE);
+            curl_close($ch2);
+            
+            echo "[LOCK] Segunda resposta - HTTP: $segundoHttpCode\n";
+            
+            if ($segundaResposta) {
+                // Tenta extrair JSON da segunda resposta
+                preg_match('/\{.*"status".*\}/s', $segundaResposta, $matches2);
+                if (!empty($matches2[0])) {
+                    echo "[LOCK] JSON extraído da segunda resposta: {$matches2[0]}\n";
+                    return json_decode($matches2[0], true);
+                }
+                
+                // Se não for JSON, pode ser que seja a própria resposta JSON
+                $dados2 = json_decode($segundaResposta, true);
+                if ($dados2 && isset($dados2['status'])) {
+                    return $dados2;
+                }
+            }
+        }
+        
+        echo "[LOCK] Não foi possível extrair JSON. Primeiros 500 caracteres da resposta:\n" . substr($resposta, 0, 500) . "\n";
     }
     
     return ['status' => 'erro', 'http' => $httpCode, 'erro_curl' => $erro];
