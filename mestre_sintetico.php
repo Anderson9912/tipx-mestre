@@ -1,96 +1,93 @@
 <?php
-// mestre_sintetico.php - Versão com servidor web para health check
-// Agora abre uma porta para o Koyeb não matar a instância
+// mestre_sintetico.php - Mestre artificial para rodar 24/7
+// GitHub + Koyeb - Versão otimizada
 
-// ===== INICIAR SERVIDOR WEB MÍNIMO EM BACKGROUND =====
-// Isso é necessário apenas para o health check do Koyeb
-$pid = pcntl_fork();
-if ($pid == -1) {
-    die("Erro ao criar processo");
-} else if ($pid == 0) {
-    // Processo filho: inicia servidor web na porta 8000
-    $docRoot = __DIR__;
-    $command = "php -S 0.0.0.0:8000 -t $docRoot > /dev/null 2>&1 &";
-    exec($command);
-    exit(0);
-}
-// Processo pai continua normalmente
-
-// ===== SEU CÓDIGO NORMAL =====
 header('Content-Type: text/plain');
 set_time_limit(0);
 ignore_user_abort(true);
 
-// Configurações
+// ===== CONFIGURAÇÕES =====
 define('SITE_URL', 'https://tipx-ag.kesug.com');
 define('TELEGRAM_TOKEN', '8459706438:AAEIhrkXEago037KTMGPk2qisGQJBelfawQ');
-define('CHECK_INTERVAL', 10);
-define('HEARTBEAT_INTERVAL', 25);
+define('CHECK_INTERVAL', 10); // segundos entre ciclos
+define('HEARTBEAT_INTERVAL', 25); // segundos entre heartbeats
 
-$deviceId = 'mestre_sintetico_koyeb_' . gethostname();
+$deviceId = 'mestre_sintetico_' . gethostname() . '_' . uniqid();
 $ultimoHeartbeat = 0;
 $ciclo = 0;
 
-echo "🚀 MESTRE SINTÉTICO INICIADO (COM HEALTH CHECK)\n";
+echo "🚀 MESTRE SINTÉTICO INICIADO\n";
 echo "📱 Device ID: $deviceId\n";
 echo "🌐 Site: " . SITE_URL . "\n";
 echo "⏱️  Intervalo: {$CHECK_INTERVAL}s\n\n";
 
+// Loop infinito
 while (true) {
     $ciclo++;
     $inicio = time();
     $timestamp = date('Y-m-d H:i:s');
     
     try {
-        // Tentar ser mestre
+        // PASSO 1: Verificar/assumir como mestre
         if ($ciclo == 1 || ($inicio - $ultimoHeartbeat) >= HEARTBEAT_INTERVAL) {
             echo "[$timestamp] 🔄 Tentando ser mestre...\n";
             $lock = tentarSerMestre($deviceId);
             
-            if ($lock && isset($lock['status']) && $lock['status'] === 'mestre') {
+            if ($lock && $lock['status'] === 'mestre') {
                 echo "[$timestamp] ✅ SOU O MESTRE SINTÉTICO!\n";
                 $ultimoHeartbeat = $inicio;
             } else {
                 $mestreAtual = $lock['mestre'] ?? 'desconhecido';
                 echo "[$timestamp] 👤 Já existe mestre: $mestreAtual\n";
-                echo "[$timestamp] ⏳ Aguardando 30s...\n";
+                echo "[$timestamp] ⏳ Aguardando 30s para verificar novamente...\n";
                 sleep(30);
                 continue;
             }
         }
         
-        // Buscar dados da API
-        echo "[$timestamp] 🔄 Ciclo $ciclo - Buscando dados...\n";
+        // PASSO 2: Buscar dados da API
+        echo "[$timestamp] 🔄 Ciclo $ciclo - Buscando dados da API...\n";
         $dadosAPI = buscarDadosAPI();
         
-        if ($dadosAPI && isset($dadosAPI['resultados'])) {
+        if ($dadosAPI && isset($dadosAPI['resultados']) && count($dadosAPI['resultados']) > 0) {
             $qtd = count($dadosAPI['resultados']);
             echo "[$timestamp] 📊 Recebidas $qtd rodadas\n";
             
+            // Calcular porcentagens
             $porcentagens = calcularPorcentagens($dadosAPI['resultados']);
-            echo "[$timestamp] 📈 50: {$porcentagens['p50']}% | 25: {$porcentagens['p25']}%\n";
+            echo "[$timestamp] 📈 50 rodadas: {$porcentagens['p50']}% | 25 rodadas: {$porcentagens['p25']}%\n";
             
+            // Salvar no gráfico
             if (salvarDadosGrafico($porcentagens)) {
                 echo "[$timestamp] ✅ Gráfico atualizado\n";
+            } else {
+                echo "[$timestamp] ❌ Falha ao atualizar gráfico\n";
             }
             
-            $alertas = verificarAlertas($dadosAPI['resultados']);
-            if ($alertas > 0) {
-                echo "[$timestamp] 🔔 Alertas: $alertas\n";
+            // Verificar alertas
+            $alertasEnviados = verificarAlertas($dadosAPI['resultados']);
+            if ($alertasEnviados > 0) {
+                echo "[$timestamp] 🔔 Alertas enviados: $alertasEnviados\n";
             }
+        } else {
+            echo "[$timestamp] ⚠️ API retornou sem dados\n";
         }
         
     } catch (Exception $e) {
-        echo "[$timestamp] ❌ Erro: " . $e->getMessage() . "\n";
+        echo "[$timestamp] ❌ ERRO: " . $e->getMessage() . "\n";
     }
     
+    // Aguardar até próximo ciclo
     $fim = time();
-    $espera = max(1, CHECK_INTERVAL - ($fim - $inicio));
-    echo "[$timestamp] ⏱️ Próximo ciclo em {$espera}s\n\n";
+    $tempoExecucao = $fim - $inicio;
+    $espera = max(1, CHECK_INTERVAL - $tempoExecucao);
+    
+    echo "[$timestamp] ⏱️ Ciclo completo em {$tempoExecucao}s, próximo em {$espera}s\n\n";
     sleep($espera);
 }
 
-// ===== FUNÇÕES (MANTIDAS IGUAIS) =====
+// ============ FUNÇÕES ============
+
 function tentarSerMestre($deviceId) {
     $url = SITE_URL . '/lock.php';
     
@@ -107,9 +104,14 @@ function tentarSerMestre($deviceId) {
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     
     $resposta = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
     
-    return json_decode($resposta, true) ?: ['status' => 'erro'];
+    if ($resposta) {
+        return json_decode($resposta, true);
+    }
+    
+    return ['status' => 'erro', 'http' => $httpCode];
 }
 
 function buscarDadosAPI() {
@@ -120,11 +122,17 @@ function buscarDadosAPI() {
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 15);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
     
     $resposta = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
     
-    return json_decode($resposta, true);
+    if ($httpCode == 200 && $resposta) {
+        return json_decode($resposta, true);
+    }
+    
+    return null;
 }
 
 function calcularPorcentagens($resultados) {
@@ -175,16 +183,19 @@ function salvarDadosGrafico($porcentagens) {
         'porcentagens25' => []
     ];
     
+    // Adicionar novo ponto
     array_unshift($dados['timestamps'], $porcentagens['timestamp']);
     array_unshift($dados['porcentagens50'], $porcentagens['p50']);
     array_unshift($dados['porcentagens25'], $porcentagens['p25']);
     
+    // Manter apenas 90 pontos
     if (count($dados['timestamps']) > 90) {
         array_splice($dados['timestamps'], 90);
         array_splice($dados['porcentagens50'], 90);
         array_splice($dados['porcentagens25'], 90);
     }
     
+    // Salvar
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, $url);
     curl_setopt($ch, CURLOPT_POST, true);
@@ -217,7 +228,7 @@ function verificarAlertas($resultados) {
     curl_close($ch);
     
     $usuarios = json_decode($resposta, true) ?: ['usuarios' => []];
-    $alertas = 0;
+    $alertasEnviados = 0;
     
     foreach ($usuarios['usuarios'] as $usuario) {
         if (empty($usuario['config_alerta']) || empty($usuario['config_alerta']['ativo'])) {
@@ -227,6 +238,7 @@ function verificarAlertas($resultados) {
         $config = $usuario['config_alerta'];
         $deveAlertar = false;
         
+        // Critério 1: % de >=2.00x
         if (!empty($config['criterio1']['rodadas']) && !empty($config['criterio1']['porcentagem'])) {
             $rodadas = min($config['criterio1']['rodadas'], count($resultados));
             $amostra = array_slice($resultados, 0, $rodadas);
@@ -242,12 +254,12 @@ function verificarAlertas($resultados) {
         
         if ($deveAlertar) {
             if (enviarAlerta($usuario['telegram_chat_id'])) {
-                $alertas++;
+                $alertasEnviados++;
             }
         }
     }
     
-    return $alertas;
+    return $alertasEnviados;
 }
 
 function enviarAlerta($chatId) {
