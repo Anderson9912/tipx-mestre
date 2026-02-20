@@ -1,5 +1,5 @@
 <?php
-// mestre_sintetico.php - Versão final com debug e health check
+// mestre_sintetico.php - Versão final com diagnóstico completo
 // Mestre artificial para rodar 24/7 no Koyeb
 
 header('Content-Type: text/plain');
@@ -33,8 +33,7 @@ while (true) {
             echo "[$timestamp] 🔄 Tentando ser mestre...\n";
             $lock = tentarSerMestre($deviceId);
             
-            // DEBUG: Mostrar resposta do servidor
-            echo "[$timestamp] 📡 Resposta do lock.php: " . json_encode($lock) . "\n";
+            echo "[$timestamp] 📡 Resposta completa: " . json_encode($lock) . "\n";
             
             if ($lock && isset($lock['status'])) {
                 if ($lock['status'] === 'mestre') {
@@ -46,9 +45,12 @@ while (true) {
                     echo "[$timestamp] ⏳ Aguardando 30s...\n";
                     sleep(30);
                     continue;
+                } elseif ($lock['status'] === 'disponivel') {
+                    echo "[$timestamp] 📭 Nenhum mestre ativo. Tentando novamente...\n";
+                    sleep(5);
+                    continue;
                 } else {
                     echo "[$timestamp] ⚠️ Status inesperado: {$lock['status']}\n";
-                    echo "[$timestamp] ⏳ Aguardando 30s...\n";
                     sleep(30);
                     continue;
                 }
@@ -103,30 +105,81 @@ while (true) {
 // ============ FUNÇÕES ============
 
 function tentarSerMestre($deviceId) {
+    // Primeiro, testa conexão com o arquivo de teste
+    $testeUrl = SITE_URL . '/teste_conexao.php';
+    echo "[TESTE] Conectando a: $testeUrl\n";
+    
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $testeUrl);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Koyeb Worker)');
+    
+    $testeResposta = curl_exec($ch);
+    $testeHttpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $testeErro = curl_error($ch);
+    $testeInfo = curl_getinfo($ch);
+    curl_close($ch);
+    
+    echo "[TESTE] Código HTTP: $testeHttpCode\n";
+    if ($testeErro) {
+        echo "[TESTE] Erro cURL: $testeErro\n";
+    }
+    if ($testeResposta) {
+        echo "[TESTE] Resposta recebida (" . strlen($testeResposta) . " bytes)\n";
+        // Mostra só o início da resposta
+        $resumo = substr($testeResposta, 0, 200);
+        echo "[TESTE] Resumo: $resumo\n";
+    } else {
+        echo "[TESTE] Resposta vazia\n";
+    }
+    
+    // Se o teste falhar, nem tenta o lock.php
+    if ($testeHttpCode != 200) {
+        return ['status' => 'erro', 'motivo' => 'teste_conexao falhou', 'http' => $testeHttpCode];
+    }
+    
+    // Agora tenta o lock.php
     $url = SITE_URL . '/lock.php';
+    echo "[LOCK] Enviando requisição para: $url\n";
+    
+    $postData = json_encode([
+        'device_id' => $deviceId,
+        'acao' => 'assumir'
+    ]);
     
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, $url);
     curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
-        'device_id' => $deviceId,
-        'acao' => 'assumir'
-    ]));
-    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json',
+        'Content-Length: ' . strlen($postData)
+    ]);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 10);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Koyeb Worker)');
     
     $resposta = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $erro = curl_error($ch);
     curl_close($ch);
     
+    echo "[LOCK] Código HTTP: $httpCode\n";
+    if ($erro) {
+        echo "[LOCK] Erro cURL: $erro\n";
+    }
+    
     if ($resposta) {
+        echo "[LOCK] Resposta: $resposta\n";
         return json_decode($resposta, true);
     }
     
-    return ['status' => 'erro', 'http' => $httpCode, 'resposta' => $resposta];
+    return ['status' => 'erro', 'http' => $httpCode, 'erro_curl' => $erro];
 }
 
 function buscarDadosAPI() {
@@ -138,6 +191,7 @@ function buscarDadosAPI() {
     curl_setopt($ch, CURLOPT_TIMEOUT, 15);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Koyeb Worker)');
     
     $resposta = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -189,6 +243,7 @@ function salvarDadosGrafico($porcentagens) {
     curl_setopt($ch, CURLOPT_TIMEOUT, 10);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Koyeb Worker)');
     
     $dadosExistentes = curl_exec($ch);
     curl_close($ch);
@@ -224,6 +279,7 @@ function salvarDadosGrafico($porcentagens) {
     curl_setopt($ch, CURLOPT_TIMEOUT, 10);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Koyeb Worker)');
     
     $resposta = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -241,6 +297,7 @@ function verificarAlertas($resultados) {
     curl_setopt($ch, CURLOPT_TIMEOUT, 10);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Koyeb Worker)');
     
     $resposta = curl_exec($ch);
     curl_close($ch);
@@ -297,6 +354,7 @@ function enviarAlerta($chatId) {
     curl_setopt($ch, CURLOPT_TIMEOUT, 5);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Koyeb Worker)');
     
     $resposta = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
