@@ -1,6 +1,6 @@
 <?php
-// mestre_sintetico.php - Mestre artificial para rodar 24/7
-// GitHub + Koyeb - Versão otimizada
+// mestre_sintetico.php - Versão final com debug e health check
+// Mestre artificial para rodar 24/7 no Koyeb
 
 header('Content-Type: text/plain');
 set_time_limit(0);
@@ -12,7 +12,7 @@ define('TELEGRAM_TOKEN', '8459706438:AAEIhrkXEago037KTMGPk2qisGQJBelfawQ');
 define('CHECK_INTERVAL', 10); // segundos entre ciclos
 define('HEARTBEAT_INTERVAL', 25); // segundos entre heartbeats
 
-$deviceId = 'mestre_sintetico_' . gethostname() . '_' . uniqid();
+$deviceId = 'mestre_sintetico_koyeb_' . gethostname() . '_' . uniqid();
 $ultimoHeartbeat = 0;
 $ciclo = 0;
 
@@ -33,13 +33,27 @@ while (true) {
             echo "[$timestamp] 🔄 Tentando ser mestre...\n";
             $lock = tentarSerMestre($deviceId);
             
-            if ($lock && $lock['status'] === 'mestre') {
-                echo "[$timestamp] ✅ SOU O MESTRE SINTÉTICO!\n";
-                $ultimoHeartbeat = $inicio;
+            // DEBUG: Mostrar resposta do servidor
+            echo "[$timestamp] 📡 Resposta do lock.php: " . json_encode($lock) . "\n";
+            
+            if ($lock && isset($lock['status'])) {
+                if ($lock['status'] === 'mestre') {
+                    echo "[$timestamp] ✅ SOU O MESTRE SINTÉTICO!\n";
+                    $ultimoHeartbeat = $inicio;
+                } elseif ($lock['status'] === 'ativo' || $lock['status'] === 'escravo') {
+                    $mestreAtual = $lock['mestre'] ?? 'desconhecido';
+                    echo "[$timestamp] 👤 Já existe mestre ativo: $mestreAtual\n";
+                    echo "[$timestamp] ⏳ Aguardando 30s...\n";
+                    sleep(30);
+                    continue;
+                } else {
+                    echo "[$timestamp] ⚠️ Status inesperado: {$lock['status']}\n";
+                    echo "[$timestamp] ⏳ Aguardando 30s...\n";
+                    sleep(30);
+                    continue;
+                }
             } else {
-                $mestreAtual = $lock['mestre'] ?? 'desconhecido';
-                echo "[$timestamp] 👤 Já existe mestre: $mestreAtual\n";
-                echo "[$timestamp] ⏳ Aguardando 30s para verificar novamente...\n";
+                echo "[$timestamp] ❌ Resposta inválida do servidor\n";
                 sleep(30);
                 continue;
             }
@@ -61,7 +75,7 @@ while (true) {
             if (salvarDadosGrafico($porcentagens)) {
                 echo "[$timestamp] ✅ Gráfico atualizado\n";
             } else {
-                echo "[$timestamp] ❌ Falha ao atualizar gráfico\n";
+                echo "[$timestamp] ⚠️ Falha ao atualizar gráfico\n";
             }
             
             // Verificar alertas
@@ -102,6 +116,7 @@ function tentarSerMestre($deviceId) {
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 10);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
     
     $resposta = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -111,7 +126,7 @@ function tentarSerMestre($deviceId) {
         return json_decode($resposta, true);
     }
     
-    return ['status' => 'erro', 'http' => $httpCode];
+    return ['status' => 'erro', 'http' => $httpCode, 'resposta' => $resposta];
 }
 
 function buscarDadosAPI() {
@@ -173,6 +188,7 @@ function salvarDadosGrafico($porcentagens) {
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 10);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
     
     $dadosExistentes = curl_exec($ch);
     curl_close($ch);
@@ -207,6 +223,7 @@ function salvarDadosGrafico($porcentagens) {
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 10);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
     
     $resposta = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -223,6 +240,7 @@ function verificarAlertas($resultados) {
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 10);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
     
     $resposta = curl_exec($ch);
     curl_close($ch);
@@ -278,6 +296,7 @@ function enviarAlerta($chatId) {
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 5);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
     
     $resposta = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
