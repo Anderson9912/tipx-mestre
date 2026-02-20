@@ -7,7 +7,7 @@ set_time_limit(0);
 ignore_user_abort(true);
 
 // ===== CONFIGURAÇÕES =====
-define('SITE_URL', 'tipx-ag.kesug.com'); // SEM o "s" do HTTPS
+define('SITE_URL', 'http://tipx-ag.kesug.com'); // SEM o "s" do HTTPS
 define('TELEGRAM_TOKEN', '8459706438:AAEIhrkXEago037KTMGPk2qisGQJBelfawQ');
 define('CHECK_INTERVAL', 10); // segundos entre ciclos
 define('HEARTBEAT_INTERVAL', 25); // segundos entre heartbeats
