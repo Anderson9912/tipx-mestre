@@ -1,5 +1,5 @@
 <?php
-// mestre_sintetico.php - Versão final com tratamento de redirecionamento
+// mestre_sintetico.php - Versão com pré-requisição GET para cookies
 // Mestre artificial para rodar 24/7 no Koyeb
 
 header('Content-Type: text/plain');
@@ -104,28 +104,47 @@ while (true) {
 // ============ FUNÇÕES ============
 
 function tentarSerMestre($deviceId) {
-    $url = SITE_URL . '/lock.php';
+    $urlBase = SITE_URL . '/lock.php';
     
-    // Headers completos de um navegador Firefox real
     $headers = [
+        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:142.0) Gecko/20100101 Firefox/142.0',
         'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         'Accept-Language: pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
         'Cache-Control: no-cache',
-        'Connection: keep-alive',
         'Pragma: no-cache',
-        'Upgrade-Insecure-Requests: 1',
-        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:142.0) Gecko/20100101 Firefox/142.0'
+        'Upgrade-Insecure-Requests: 1'
     ];
+    
+    // PASSO 1: Fazer requisição GET para obter os cookies de proteção
+    echo "[LOCK] Obtendo cookies de proteção (GET)...\n";
+    
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $urlBase);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HEADER, true); // Capturar headers para ver cookies
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_COOKIEFILE, '/tmp/cookies.txt');
+    curl_setopt($ch, CURLOPT_COOKIEJAR, '/tmp/cookies.txt');
+    
+    $respostaGet = curl_exec($ch);
+    $httpCodeGet = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    
+    echo "[LOCK] GET - Código HTTP: $httpCodeGet\n";
+    
+    // PASSO 2: Agora faz a requisição POST com os cookies obtidos
+    echo "[LOCK] Enviando requisição POST com cookies...\n";
     
     $postData = json_encode([
         'device_id' => $deviceId,
         'acao' => 'assumir'
     ]);
     
-    echo "[LOCK] Enviando requisição para: $url\n";
-    
     $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_URL, $urlBase);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
     curl_setopt($ch, CURLOPT_HTTPHEADER, array_merge($headers, ['Content-Type: application/json']));
@@ -133,80 +152,30 @@ function tentarSerMestre($deviceId) {
     curl_setopt($ch, CURLOPT_TIMEOUT, 15);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_MAXREDIRS, 3);
     curl_setopt($ch, CURLOPT_COOKIEFILE, '/tmp/cookies.txt');
     curl_setopt($ch, CURLOPT_COOKIEJAR, '/tmp/cookies.txt');
     
     $resposta = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $effectiveUrl = curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
     $erro = curl_error($ch);
     curl_close($ch);
     
-    echo "[LOCK] Código HTTP: $httpCode\n";
-    echo "[LOCK] URL final: $effectiveUrl\n";
+    echo "[LOCK] POST - Código HTTP: $httpCode\n";
     
     if ($erro) {
         echo "[LOCK] Erro cURL: $erro\n";
     }
     
-    // Método 1: Tentar extrair JSON do HTML com regex mais abrangente
     if ($resposta) {
-        // Procura por qualquer objeto JSON na resposta
-        preg_match('/\{[^\{\}]*"status"[^\{\}]*\}/', $resposta, $matches);
-        
-        if (empty($matches)) {
-            // Tenta um padrão mais abrangente
-            preg_match('/\{.*"status".*\}/s', $resposta, $matches);
+        // Tenta interpretar como JSON
+        $dados = json_decode($resposta, true);
+        if ($dados && isset($dados['status'])) {
+            echo "[LOCK] JSON recebido: " . json_encode($dados) . "\n";
+            return $dados;
         }
         
-        if (!empty($matches[0])) {
-            $jsonEncontrado = $matches[0];
-            echo "[LOCK] JSON extraído: $jsonEncontrado\n";
-            
-            $dados = json_decode($jsonEncontrado, true);
-            if ($dados && isset($dados['status'])) {
-                return $dados;
-            }
-        }
-        
-        // Método 2: Se não encontrou JSON, tenta fazer uma segunda requisição para a URL final
-        if ($effectiveUrl != $url) {
-            echo "[LOCK] Seguindo redirecionamento para: $effectiveUrl\n";
-            
-            $ch2 = curl_init();
-            curl_setopt($ch2, CURLOPT_URL, $effectiveUrl);
-            curl_setopt($ch2, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch2, CURLOPT_TIMEOUT, 10);
-            curl_setopt($ch2, CURLOPT_SSL_VERIFYPEER, false);
-            curl_setopt($ch2, CURLOPT_FOLLOWLOCATION, true);
-            curl_setopt($ch2, CURLOPT_HTTPHEADER, $headers);
-            curl_setopt($ch2, CURLOPT_COOKIEFILE, '/tmp/cookies.txt');
-            curl_setopt($ch2, CURLOPT_COOKIEJAR, '/tmp/cookies.txt');
-            
-            $segundaResposta = curl_exec($ch2);
-            $segundoHttpCode = curl_getinfo($ch2, CURLINFO_HTTP_CODE);
-            curl_close($ch2);
-            
-            echo "[LOCK] Segunda resposta - HTTP: $segundoHttpCode\n";
-            
-            if ($segundaResposta) {
-                // Tenta extrair JSON da segunda resposta
-                preg_match('/\{.*"status".*\}/s', $segundaResposta, $matches2);
-                if (!empty($matches2[0])) {
-                    echo "[LOCK] JSON extraído da segunda resposta: {$matches2[0]}\n";
-                    return json_decode($matches2[0], true);
-                }
-                
-                // Se não for JSON, pode ser que seja a própria resposta JSON
-                $dados2 = json_decode($segundaResposta, true);
-                if ($dados2 && isset($dados2['status'])) {
-                    return $dados2;
-                }
-            }
-        }
-        
-        echo "[LOCK] Não foi possível extrair JSON. Primeiros 500 caracteres da resposta:\n" . substr($resposta, 0, 500) . "\n";
+        // Se não for JSON, mostra os primeiros 200 caracteres
+        echo "[LOCK] Resposta não-JSON (início): " . substr($resposta, 0, 200) . "\n";
     }
     
     return ['status' => 'erro', 'http' => $httpCode, 'erro_curl' => $erro];
