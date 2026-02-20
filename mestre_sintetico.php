@@ -1,5 +1,5 @@
 <?php
-// mestre_sintetico.php - Versão final com diagnóstico completo
+// mestre_sintetico.php - Versão com headers de navegador completo
 // Mestre artificial para rodar 24/7 no Koyeb
 
 header('Content-Type: text/plain');
@@ -7,7 +7,7 @@ set_time_limit(0);
 ignore_user_abort(true);
 
 // ===== CONFIGURAÇÕES =====
-define('SITE_URL', 'http://tipx-ag.kesug.com'); // SEM o "s" do HTTPS
+define('SITE_URL', 'https://tipx-ag.kesug.com');
 define('TELEGRAM_TOKEN', '8459706438:AAEIhrkXEago037KTMGPk2qisGQJBelfawQ');
 define('CHECK_INTERVAL', 10); // segundos entre ciclos
 define('HEARTBEAT_INTERVAL', 25); // segundos entre heartbeats
@@ -46,9 +46,8 @@ while (true) {
                     sleep(30);
                     continue;
                 } elseif ($lock['status'] === 'disponivel') {
-                    echo "[$timestamp] 📭 Nenhum mestre ativo. Tentando novamente...\n";
-                    sleep(5);
-                    continue;
+                    echo "[$timestamp] 📭 Nenhum mestre ativo. Vou assumir!\n";
+                    // Tenta novamente no próximo ciclo
                 } else {
                     echo "[$timestamp] ⚠️ Status inesperado: {$lock['status']}\n";
                     sleep(30);
@@ -105,64 +104,37 @@ while (true) {
 // ============ FUNÇÕES ============
 
 function tentarSerMestre($deviceId) {
-    // Primeiro, testa conexão com o arquivo de teste
-    $testeUrl = SITE_URL . '/teste_conexao.php';
-    echo "[TESTE] Conectando a: $testeUrl\n";
-    
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $testeUrl);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Koyeb Worker)');
-    
-    $testeResposta = curl_exec($ch);
-    $testeHttpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $testeErro = curl_error($ch);
-    $testeInfo = curl_getinfo($ch);
-    curl_close($ch);
-    
-    echo "[TESTE] Código HTTP: $testeHttpCode\n";
-    if ($testeErro) {
-        echo "[TESTE] Erro cURL: $testeErro\n";
-    }
-    if ($testeResposta) {
-        echo "[TESTE] Resposta recebida (" . strlen($testeResposta) . " bytes)\n";
-        // Mostra só o início da resposta
-        $resumo = substr($testeResposta, 0, 200);
-        echo "[TESTE] Resumo: $resumo\n";
-    } else {
-        echo "[TESTE] Resposta vazia\n";
-    }
-    
-    // Se o teste falhar, nem tenta o lock.php
-    if ($testeHttpCode != 200) {
-        return ['status' => 'erro', 'motivo' => 'teste_conexao falhou', 'http' => $testeHttpCode];
-    }
-    
-    // Agora tenta o lock.php
     $url = SITE_URL . '/lock.php';
-    echo "[LOCK] Enviando requisição para: $url\n";
+    
+    // Headers completos de um navegador Firefox real
+    $headers = [
+        'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language: pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Cache-Control: no-cache',
+        'Connection: keep-alive',
+        'Pragma: no-cache',
+        'Upgrade-Insecure-Requests: 1',
+        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:142.0) Gecko/20100101 Firefox/142.0'
+    ];
     
     $postData = json_encode([
         'device_id' => $deviceId,
         'acao' => 'assumir'
     ]);
     
+    echo "[LOCK] Enviando requisição para: $url\n";
+    
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, $url);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        'Content-Type: application/json',
-        'Content-Length: ' . strlen($postData)
-    ]);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, array_merge($headers, ['Content-Type: application/json']));
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Koyeb Worker)');
+    curl_setopt($ch, CURLOPT_COOKIEFILE, '/tmp/cookies.txt'); // Armazena cookies
+    curl_setopt($ch, CURLOPT_COOKIEJAR, '/tmp/cookies.txt');  // como um navegador
     
     $resposta = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -174,9 +146,18 @@ function tentarSerMestre($deviceId) {
         echo "[LOCK] Erro cURL: $erro\n";
     }
     
+    // Tenta extrair JSON mesmo que venha dentro do HTML
     if ($resposta) {
-        echo "[LOCK] Resposta: $resposta\n";
-        return json_decode($resposta, true);
+        // Procura por um padrão JSON simples no meio do HTML
+        preg_match('/\{.*"status".*\}/', $resposta, $matches);
+        if (!empty($matches[0])) {
+            $jsonEncontrado = $matches[0];
+            echo "[LOCK] JSON extraído do HTML: $jsonEncontrado\n";
+            return json_decode($jsonEncontrado, true);
+        } else {
+            // Se não encontrar JSON, mostra os primeiros 200 caracteres da resposta
+            echo "[LOCK] Resposta (início): " . substr($resposta, 0, 200) . "\n";
+        }
     }
     
     return ['status' => 'erro', 'http' => $httpCode, 'erro_curl' => $erro];
@@ -191,7 +172,9 @@ function buscarDadosAPI() {
     curl_setopt($ch, CURLOPT_TIMEOUT, 15);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Koyeb Worker)');
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:142.0) Gecko/20100101 Firefox/142.0');
+    curl_setopt($ch, CURLOPT_COOKIEFILE, '/tmp/cookies.txt');
+    curl_setopt($ch, CURLOPT_COOKIEJAR, '/tmp/cookies.txt');
     
     $resposta = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -243,7 +226,9 @@ function salvarDadosGrafico($porcentagens) {
     curl_setopt($ch, CURLOPT_TIMEOUT, 10);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Koyeb Worker)');
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:142.0) Gecko/20100101 Firefox/142.0');
+    curl_setopt($ch, CURLOPT_COOKIEFILE, '/tmp/cookies.txt');
+    curl_setopt($ch, CURLOPT_COOKIEJAR, '/tmp/cookies.txt');
     
     $dadosExistentes = curl_exec($ch);
     curl_close($ch);
@@ -279,7 +264,9 @@ function salvarDadosGrafico($porcentagens) {
     curl_setopt($ch, CURLOPT_TIMEOUT, 10);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Koyeb Worker)');
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:142.0) Gecko/20100101 Firefox/142.0');
+    curl_setopt($ch, CURLOPT_COOKIEFILE, '/tmp/cookies.txt');
+    curl_setopt($ch, CURLOPT_COOKIEJAR, '/tmp/cookies.txt');
     
     $resposta = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -297,7 +284,9 @@ function verificarAlertas($resultados) {
     curl_setopt($ch, CURLOPT_TIMEOUT, 10);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Koyeb Worker)');
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:142.0) Gecko/20100101 Firefox/142.0');
+    curl_setopt($ch, CURLOPT_COOKIEFILE, '/tmp/cookies.txt');
+    curl_setopt($ch, CURLOPT_COOKIEJAR, '/tmp/cookies.txt');
     
     $resposta = curl_exec($ch);
     curl_close($ch);
@@ -354,7 +343,7 @@ function enviarAlerta($chatId) {
     curl_setopt($ch, CURLOPT_TIMEOUT, 5);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Koyeb Worker)');
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:142.0) Gecko/20100101 Firefox/142.0');
     
     $resposta = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
