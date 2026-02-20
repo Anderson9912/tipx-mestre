@@ -19,7 +19,7 @@ $ciclo = 0;
 echo "🚀 MESTRE SINTÉTICO INICIADO\n";
 echo "📱 Device ID: $deviceId\n";
 echo "🌐 Site: " . SITE_URL . "\n";
-echo "⏱️  Intervalo: {$CHECK_INTERVAL}s\n\n";
+echo "⏱️  Intervalo: " . CHECK_INTERVAL . "s\n\n";
 
 // Loop infinito
 while (true) {
